@@ -141,7 +141,49 @@ module.exports = function staticCache(dir, options, files) {
       return
     }
 
-    var stream = fs.createReadStream(file.path)
+    const makeStream = (req) => {
+      const range = (req.headers && req.headers['range']);
+      if (range) {
+        const total = file.length;
+        const [ start, end ] = range.replace(/bytes=/, "").split('-', 2)
+          .map(n => {
+            const num = parseInt(n, 10);
+            console.log('number', num, typeof num)
+            return !isNaN(num) ? Math.min(num, total - 1) : total - 1;
+          });
+
+        const chunksize = (end - start) + 1;
+        if (start > end || isNaN(start) || isNaN(end)) {
+          return null;
+        }
+
+        this.set('Content-Range', `bytes ${start}-${end}/${total}`);
+        this.set('Accept-Ranges', 'bytes');
+        this.set('Content-Length', chunksize);
+
+        console.log('range', {
+          headers: this.headers,
+          total,
+          start,
+          end,
+          chunksize
+        });
+
+        const stream = fs.createReadStream(file.path, { start });
+        stream.on('error', function (err) {
+          console.log(err);
+        });
+        this.res.on('close', function () {
+           stream.destroy();
+        });
+        
+        return stream;
+      } else {
+        return fs.createReadStream(file.path);
+      }
+    }
+
+    const stream = makeStream(this.req);
 
     // update file hash
     if (!file.md5) {
@@ -182,11 +224,11 @@ function safeDecodeURIComponent(text) {
  */
 
 function loadFile(name, dir, options, files) {
-  var pathname = path.normalize(path.join(options.prefix, name))
-  var obj = files[pathname] = files[pathname] ? files[pathname] : {}
-  var filename = obj.path = path.join(dir, name)
-  var stats = fs.statSync(filename)
-  var buffer = fs.readFileSync(filename)
+  const pathname = path.normalize(path.join(options.prefix, name))
+  const obj = files[pathname] = files[pathname] ? files[pathname] : {}
+  const filename = obj.path = path.join(dir, name)
+  const stats = fs.statSync(filename)
+  const buffer = fs.readFileSync(filename)
 
   obj.cacheControl = options.cacheControl
   obj.maxAge = obj.maxAge ? obj.maxAge : options.maxAge || 0
